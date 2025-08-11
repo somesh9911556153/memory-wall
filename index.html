@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Shared Memory Wall (MySQL Version)</title>
+<style>
+  :root{
+    --bg:#071028; --card:#0f1b33; --accent:#8b5cf6; --muted:#9aa6bf;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:Inter,system-ui,Segoe UI,Arial; background:linear-gradient(180deg,var(--bg),#021226);
+    color:#e6eef8; padding:20px; min-height:100vh;
+  }
+  .wrap{max-width:900px;margin:0 auto;}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  header h1{font-size:1.25rem;margin:0}
+  .card{background:linear-gradient(180deg,var(--card),#071634); border-radius:12px;padding:16px;box-shadow:0 6px 24px rgba(2,6,23,0.6); margin-bottom:16px}
+  form.grid{display:grid;grid-template-columns:1fr;gap:12px}
+  input[type="text"], textarea{
+    width:100%; padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); color:inherit;
+  }
+  textarea{resize:vertical;min-height:70px}
+  .controls{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px}
+  .btn{background:var(--accent);color:white;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+  .posts{display:grid;gap:12px;margin-top:18px}
+  .post{display:flex;gap:12px;align-items:flex-start}
+  .avatar{width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#5b21b6);display:flex;align-items:center;justify-content:center;font-weight:700}
+  .content{flex:1}
+  .meta{display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--muted);margin-bottom:6px}
+  .msg{background:rgba(255,255,255,0.02);padding:10px;border-radius:8px;color:inherit}
+  .post img.memimg, .post video.memvid{max-width:280px;width:100%;border-radius:8px;margin-top:8px;display:block}
+  .post-actions{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .small{font-size:0.85rem;color:var(--muted)}
+  .empty{color:var(--muted);text-align:center;padding:26px;border-radius:10px;background:rgba(255,255,255,0.01)}
+  .like-btn{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:6px 8px;border-radius:8px;cursor:pointer}
+  .like-btn.liked{border-color:var(--accent);color:var(--accent)}
+  .delete-btn{background:#2b2b2b;border:1px solid rgba(255,255,255,0.04);color:#fff;padding:6px 8px;border-radius:8px;cursor:pointer}
+  .file-label{display:inline-block;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);cursor:pointer;border:1px dashed rgba(255,255,255,0.04)}
+  footer{margin-top:18px;color:var(--muted);font-size:0.85rem;text-align:center}
+  @media (max-width:600px){
+    .post img.memimg, .post video.memvid { max-width:100%; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#5b21b6);display:flex;align-items:center;justify-content:center">M</div>
+      <h1>Shared Memory Wall</h1>
+    </header>
+
+    <div class="card">
+      <form id="postForm" class="grid" enctype="multipart/form-data">
+        <input id="name" name="name" type="text" placeholder="Your name (optional)" maxlength="30" />
+        <textarea id="message" name="message" placeholder="Write a memory..." required maxlength="800"></textarea>
+
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <label class="file-label">
+            <input id="fileInput" name="file" type="file" accept="image/*,video/*" style="display:none" />
+            + Add image/video
+          </label>
+          <span id="fileName" class="small" style="opacity:.8"></span>
+        </div>
+
+        <div class="controls">
+          <button id="clearBtn" class="btn ghost" type="button">Clear</button>
+          <button id="postBtn" class="btn" type="submit">Post memory</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="postsContainer" class="posts"></div>
+
+    <footer>
+      Powered by MySQL backend — posts are stored permanently.
+    </footer>
+  </div>
+
+
+
+<script>
+/* Configuration */
+const API_BASE = "http://localhost:3000"; // Make sure backend is running here
+
+/* Elements */
+const postsContainer = document.getElementById('postsContainer');
+const postForm = document.getElementById('postForm');
+const fileInput = document.getElementById('fileInput');
+const fileName = document.getElementById('fileName');
+const clearBtn = document.getElementById('clearBtn');
+
+/* UI handlers */
+fileInput.addEventListener('change', () => {
+  fileName.textContent = fileInput.files[0]?.name || '';
+});
+
+clearBtn.addEventListener('click', () => {
+  postForm.reset();
+  fileName.textContent = '';
+});
+
+/* Fetch and render posts */
+async function loadPosts(){
+  try{
+    const res = await fetch(`${API_BASE}/api/posts`);
+    if(!res.ok) throw new Error('Failed to load posts');
+    const posts = await res.json();
+    postsContainer.innerHTML = '';
+    if(!posts.length){
+      postsContainer.innerHTML = '<div class="empty card">No memories yet — be the first!</div>';
+      return;
+    }
+    posts.forEach(p => postsContainer.appendChild(renderPost(p)));
+  }catch(err){
+    postsContainer.innerHTML = `<div class="empty card">Could not load posts. ${err.message}</div>`;
+    console.error(err);
+  }
+}
+
+function renderPost(p){
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card post';
+  wrapper.dataset.id = p.id;
+
+  const media = p.file_url
+    ? (p.file_type === 'image'
+        ? `<img class="memimg" src="${API_BASE}${p.file_url}" alt="image">`
+        : `<video class="memvid" src="${API_BASE}${p.file_url}" controls></video>`)
+    : '';
+
+  wrapper.innerHTML = `
+    <div class="avatar">${(p.name||'M').slice(0,1).toUpperCase()}</div>
+    <div class="content">
+      <div class="meta"><strong>${escapeHtml(p.name || 'Anonymous')}</strong> • <span class="small">${new Date(p.created_at).toLocaleString()}</span></div>
+      <div class="msg">${escapeHtml(p.message).replace(/\n/g,'<br>')}</div>
+      ${media}
+      <div class="post-actions">
+        <button type="button" class="like-btn ${p.likes>0?'liked':''}" data-id="${p.id}">❤ <span class="like-count">${p.likes||0}</span></button>
+        <button type="button" class="delete-btn" data-id="${p.id}">🗑 Delete</button>
+      </div>
+    </div>
+  `;
+  return wrapper;
+}
+
+/* Escape helper */
+function escapeHtml(s = ''){
+  return String(s)
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+
+/* Form submit (upload) */
+postForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const formData = new FormData(postForm);
+
+  try{
+    const res = await fetch(`${API_BASE}/api/posts`, {
+      method: "POST",
+      body: formData
+    });
+    if(!res.ok) throw new Error('Upload failed');
+    postForm.reset();
+    fileName.textContent = '';
+    await loadPosts();
+  }catch(err){
+    alert('Error: ' + err.message);
+    console.error(err);
+  }
+});
+
+/* Delegated click handler for like & delete */
+postsContainer.addEventListener('click', async (e) => {
+  const likeBtn = e.target.closest('.like-btn');
+  const delBtn = e.target.closest('.delete-btn');
+
+  if(likeBtn){
+    const id = likeBtn.dataset.id;
+    try{
+      const res = await fetch(`${API_BASE}/api/posts/${id}/like`, { method: 'POST' });
+      if(!res.ok) throw new Error('Failed to like');
+      await loadPosts(); // reload to show updated likes
+    }catch(err){
+      alert('Could not like post');
+      console.error(err);
+    }
+  }
+
+  if(delBtn){
+    const id = delBtn.dataset.id;
+    if(!confirm('Delete this post?')) return;
+    try{
+      const res = await fetch(`${API_BASE}/api/posts/${id}`, { method: 'DELETE' });
+      if(!res.ok) throw new Error('Delete failed');
+      await loadPosts(); // reload to remove deleted post
+    }catch(err){
+      alert('Could not delete post');
+      console.error(err);
+    }
+  }
+});
+
+/* initial load */
+loadPosts();
+</script>
+
+</body>
+</html>
